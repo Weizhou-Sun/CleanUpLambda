@@ -1,0 +1,149 @@
+Transform: 'AWS::Serverless-2016-10-31'
+Parameters:
+  CloudWatchEventName:
+    Type: String
+    Default: CleanUpEvent
+    Description: name of the cloud watch event
+  CleanUpSfnName:
+    Type: String
+    Default: 'CleanUpStepFunction'
+    Description: name of step functions
+  RetentionPeriod:
+    Type: String 
+    Default: 24
+    Description: how long will instance survive after creation
+  TerminationProtectionTagName:
+    Type: String 
+    Default: 'termination_detection'
+    Description: what is the termination detection tag so that the instance will be execluded from termination after given period of timer
+  TimerFunctionName:
+    Type: String
+    Default: TimerFunction
+    Description: timer function name
+  CleanUpFunctionName:
+    Type: String 
+    Default: CleanUpFunction 
+    Description: clean up function name
+  SourceCodeBucket:
+    Type: String
+    Default: cleanup.lambda.function.modules
+  SourceFileKey:
+    Type: String
+    Default: lambda.zip
+
+Resources:
+  CleanUpRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+                - "states.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Policies: 
+        -
+          PolicyName: CleanUpPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action:
+                  - "states:*"
+                  - "ec2:Describe*"
+                  - "ec2:DeleteInstance"
+                  - "log:*"
+                Resource: "*"
+
+  TimerFunction:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Description: to calculated degsinated deletion time based on retention period 
+      FunctionName: !Ref TimerFunctionName
+      Runtime: python3.7
+      Handler: timer.lambda_handler
+      Timeout: 900
+      MemorySize: 512
+      CodeUri:
+        Bucket: !Sub
+        - ${SourceCodeBucket}.${AWS::AccountId}.${AWS::Region}
+        - { SourceCodeBucket: !Ref SourceCodeBucket }
+        Key: !Ref SourceFileKey
+      Role: !GetAtt CleanUpRole.Arn
+      Events:
+        "TimerNotification":
+          Type: CloudWatchEvent
+          Properties:
+            Pattern:
+              source: 
+                - "aws.ec2"
+              detail-type: 
+                - "EC2 Instance State-change Notification"
+              detail: 
+                state: 
+                  - "running"
+                  - "terminated"
+      Environment:
+        Variables:
+          CleanUpSfnName: !Ref CleanUpSfnName
+          RetentionPeriod: !Ref RetentionPeriod
+  
+  CleanUpFunction:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Ref CleanUpFunctionName
+      Runtime: python3.7
+      Handler: cleanUp.lambda_handler
+      Timeout: 900
+      MemorySize: 512
+      CodeUri:
+        Bucket: !Sub
+        - ${SourceCodeBucket}.${AWS::AccountId}.${AWS::Region}
+        - { SourceCodeBucket: !Ref SourceCodeBucket }
+        Key: !Ref SourceFileKey
+      Role: !GetAtt CleanUpRole.Arn
+      Environment:
+        Variables:
+          TerminationProtectionTagName: !Ref TerminationProtectionTagName
+
+  CleanUpSfn:
+    Type: 'AWS::StepFunctions::StateMachine'
+    Properties: 
+      DefinitionString: 
+        !Sub
+        - |-
+          {
+              "Comment": "Clean Up step functions to wait till the degsinated time stamp",
+              "StartAt": "WaitforTimestamp",
+              "States": {
+                  "WaitforTimestamp": {
+                      "Type": "Wait",
+                      "TimestampPath": "$.DeletionTime",
+                      "Next": "CleanUpFunction"
+                  },
+                  "CleanUpFunction": {
+                      "Type": "Task",
+                      "Resource": "${CleanUpFunctionArn}",
+                      "Retry": [
+                          {
+                              "ErrorEquals": [
+                                  "States.ALL"
+                              ],
+                              "IntervalSeconds": 1,
+                              "MaxAttempts": 3,
+                              "BackoffRate": 2.0
+                          }
+                      ],
+                      "End": true
+                  }
+              }
+          }
+        - {CleanUpFunctionArn: !GetAtt [ CleanUpFunction, Arn ]}
+      RoleArn: !GetAtt CleanUpRole.Arn
+      StateMachineName: !Ref CleanUpSfnName

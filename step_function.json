@@ -1,0 +1,26 @@
+{
+    "Comment": "Clean Up step functions to wait till the degsinated time stamp",
+    "StartAt": "WaitforTimestamp",
+    "States": {
+        "WaitforTimestamp": {
+            "Type": "Wait",
+            "TimestampPath": "$.DeletionTime",
+            "Next": "CleanUpFunction"
+        },
+        "CleanUpFunction": {
+            "Type": "Task",
+            "Resource": "arn:aws:lambda:eu-west-1:304191265855:function:wei-test-CleanUpLambda",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 1,
+                    "MaxAttempts": 3,
+                    "BackoffRate": 2.0
+                }
+            ],
+            "End": true
+        }
+    }
+}
