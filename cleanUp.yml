@@ -35,6 +35,7 @@ Resources:
   CleanUpRole:
     Type: 'AWS::IAM::Role'
     Properties:
+      RoleName: !Sub 'CleanUpRole-${AWS::Region}'
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -56,9 +57,12 @@ Resources:
                 Effect: "Allow"
                 Action:
                   - "states:*"
-                  - "ec2:Describe*"
-                  - "ec2:DeleteInstance"
-                  - "log:*"
+                  - "ec2:DescribeInstances"
+                  - "ec2:DescribeTags"
+                  - "ec2:DescribeInstanceStatus"
+                  - "ec2:TerminateInstances"
+                  - "logs:*"
+                  - "lambda:InvokeFunction"
                 Resource: "*"
 
   TimerFunction:
